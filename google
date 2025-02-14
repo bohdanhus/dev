@@ -1,0 +1,166 @@
+import os
+import zipfile
+import json
+import asyncio
+import csv
+import shutil
+import logging
+
+# Настройка логирования
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+# 🔹 Пути
+TAKEOUT_FOLDER = "takeout_monitor"
+EXTRACT_FOLDER = "takeout_data"
+PROCESSED_FOLDER = "processed_data"
+ARCHIVE_FOLDER = "processed_archives"
+
+# 🔹 Регистрация сервисов
+SERVICE_HANDLERS = {}
+
+def register_service(service_name):
+    """Декоратор для регистрации обработчиков сервисов."""
+    def decorator(func):
+        SERVICE_HANDLERS[service_name.lower()] = func
+        return func
+    return decorator
+
+# 1️⃣ **Мониторинг папки с архивами**
+async def monitor_takeout():
+    """Следит за появлением новых архивов в папке и автоматически их обрабатывает."""
+    logging.info(f"📡 Запуск мониторинга папки {TAKEOUT_FOLDER}...")
+    
+    processed_files = set()
+    
+    while True:
+        files = os.listdir(TAKEOUT_FOLDER)
+        
+        for file in files:
+            if file.endswith(".zip") and file not in processed_files:
+                logging.info(f"📂 Найден новый архив: {file}")
+                zip_path = os.path.join(TAKEOUT_FOLDER, file)
+                
+                await extract_takeout(zip_path)
+                await process_takeout_data(EXTRACT_FOLDER)
+
+                # Перемещение обработанного архива
+                shutil.move(zip_path, os.path.join(ARCHIVE_FOLDER, file))
+                processed_files.add(file)
+        
+        await asyncio.sleep(10)  # Проверяем каждые 10 секунд
+
+# 2️⃣ **Разархивирование Google Takeout**
+async def extract_takeout(zip_path):
+    """Разархивирует Google Takeout."""
+    os.makedirs(EXTRACT_FOLDER, exist_ok=True)
+    
+    with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+        zip_ref.extractall(EXTRACT_FOLDER)
+    
+    logging.info(f"✅ Архив {zip_path} извлечен в {EXTRACT_FOLDER}")
+
+# 3️⃣ **Определение сервиса и обработка данных**
+async def process_takeout_data(folder_path):
+    """Проходит по файлам и обрабатывает данные в зависимости от сервиса Google."""
+    for root, _, files in os.walk(folder_path):
+        for file in files:
+            file_path = os.path.join(root, file)
+            service_name = get_service_name(file_path)
+
+            if service_name and service_name in SERVICE_HANDLERS:
+                logging.info(f"🔍 Обработка {service_name}: {file_path}")
+                await SERVICE_HANDLERS[service_name](file_path)
+            else:
+                logging.warning(f"⚠️ Неизвестный файл: {file_path}")
+
+# 4️⃣ **Определение сервиса по имени файла**
+def get_service_name(file_path):
+    """Анализирует имя файла и определяет, к какому сервису он относится."""
+    filename = os.path.basename(file_path).lower()
+    for service in SERVICE_HANDLERS.keys():
+        if service in filename:
+            return service
+    return None
+
+# 5️⃣ **Обработка Google Chrome (История браузера)**
+@register_service("chrome")
+async def process_chrome(file_path):
+    """Обрабатывает историю браузера Chrome."""
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        processed_data = [
+            {"title": item.get("title"), "url": item.get("url"), "time": item.get("time")}
+            for item in data.get("history", [])
+        ]
+        
+        await save_processed_file(file_path, processed_data)
+        logging.info(f"🌐 История Chrome обработана: {file_path}")
+
+    except Exception as e:
+        logging.error(f"❌ Ошибка обработки Chrome {file_path}: {e}")
+
+# 6️⃣ **Обработка Google Activity (История активности)**
+@register_service("google_activity")
+async def process_google_activity(file_path):
+    """Обрабатывает историю активности Google (поиск, просмотр видео)."""
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        processed_data = [
+            {"activity": item.get("header"), "details": item.get("title"), "time": item.get("time")}
+            for item in data.get("activity", [])
+        ]
+        
+        await save_processed_file(file_path, processed_data)
+        logging.info(f"📊 Google Activity обработана: {file_path}")
+
+    except Exception as e:
+        logging.error(f"❌ Ошибка обработки Google Activity {file_path}: {e}")
+
+# 7️⃣ **Обработка Gmail (например, писем)**
+@register_service("gmail")
+async def process_gmail(file_path):
+    """Обрабатывает данные Gmail (например, отправленные и полученные письма)."""
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        processed_data = [
+            {"from": email.get("from"), "to": email.get("to"), "subject": email.get("subject"), "date": email.get("date")}
+            for email in data.get("emails", [])
+        ]
+        
+        await save_processed_file(file_path, processed_data)
+        logging.info(f"📩 Gmail обработан: {file_path}")
+
+    except Exception as e:
+        logging.error(f"❌ Ошибка обработки Gmail {file_path}: {e}")
+
+# 8️⃣ **Сохранение обработанных данных**
+async def save_processed_file(original_path, data):
+    """Сохраняет обработанные данные в JSON и CSV."""
+    os.makedirs(PROCESSED_FOLDER, exist_ok=True)
+
+    base_name = os.path.basename(original_path).split('.')[0]
+    json_path = os.path.join(PROCESSED_FOLDER, base_name + "_processed.json")
+    csv_path = os.path.join(PROCESSED_FOLDER, base_name + "_processed.csv")
+
+    # JSON
+    with open(json_path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, ensure_ascii=False, indent=4)
+
+    # CSV
+    if data:
+        with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+            writer = csv.DictWriter(f, fieldnames=data[0].keys())
+            writer.writeheader()
+            writer.writerows(data)
+
+    logging.info(f"📁 Данные сохранены: {json_path}, {csv_path}")
+
+# 9️⃣ **Запуск сервиса**
+if __name__ == "__main__":
+    asyncio.run(monitor_takeout())
