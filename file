@@ -1,0 +1,91 @@
+import csv
+import pandas as pd
+
+def process_file(path):
+    """
+    Processes a single CSV file, splitting it into multiple tables based on empty rows as separators.
+    Returns a list of tables, each represented by a list of rows.
+    """
+    tables = []
+    current_table = []
+    empty_row_count = 0
+
+    try:
+        with open(path, "r", encoding="utf-8") as file:
+            reader = csv.reader(file)
+
+            for row in reader:
+                if not any(row):  
+                    empty_row_count += 1
+                    if empty_row_count == 2:
+                        if current_table:
+                            tables.append(current_table)
+                            current_table = []
+                        empty_row_count = 0
+                else:
+                    empty_row_count = 0
+                    current_table.append(row)
+
+            if current_table:
+                tables.append(current_table)
+
+        return tables
+    except Exception as e:
+        print(f"Error processing file {path}: {e}")
+        return []
+
+def create_dataframe_from_tables(tables, path):
+    """
+    Converts tables into DataFrames and stores them in a dictionary.
+    Adjusts columns if data columns do not match header length.
+    """
+    all_tables = {}
+
+    for i, table in enumerate(tables):
+        try:
+            table_name = table[0][0] if table else f"Table_{i}"
+            columns = table[1] if len(table) > 1 else []
+            rows = table[2:] if len(table) > 2 else []
+
+            if columns:
+                num_columns = len(columns)
+                for row in rows:
+                    if len(row) < num_columns:
+                        row.extend([None] * (num_columns - len(row)))
+                    elif len(row) > num_columns:
+                        row = row[:num_columns]
+
+            df = pd.DataFrame(rows, columns=columns)
+
+            if path not in all_tables:
+                all_tables[path] = {}
+            all_tables[path][table_name] = df
+        except Exception as e:
+            print(f"Error processing table {i} from file {path}: {e}")
+
+    return all_tables
+
+def read_and_process_files(paths):
+    """
+    Reads multiple files, processes them, and returns a dictionary of DataFrames for each table in the files.
+    """
+    all_tables = {}
+
+    for path in paths:
+        tables = process_file(path)
+        if tables:
+            all_tables.update(create_dataframe_from_tables(tables, path))
+
+    return all_tables
+
+# File paths to process
+paths = ["iCloudUsageData Set1.csv"]
+
+# Process all files and create DataFrames for each table
+all_tables = read_and_process_files(paths)
+
+# Print the details of each table (rows x columns)
+for file, tables in all_tables.items():
+    print(f"\nTables in file {file}:")
+    for table_name, df in tables.items():
+        print(f"  - {table_name}: {df.shape[0]} rows x {df.shape[1]} columns")
