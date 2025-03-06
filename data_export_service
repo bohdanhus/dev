@@ -1,0 +1,53 @@
+import pandas as pd
+import json
+import os
+
+class DataExportService:
+    def __init__(self, file_path):
+        self.file_path = file_path
+        self.data = None
+
+    def extract(self):
+        """Извлекает данные из JSON-файла."""
+        if not os.path.exists(self.file_path):
+            raise FileNotFoundError(f"Файл {self.file_path} не найден.")
+
+        with open(self.file_path, 'r', encoding='utf-8') as file:
+            self.data = json.load(file)
+        print("Данные успешно загружены.")
+
+    def clean(self):
+        """Очищает данные (пример: удаление пустых значений)."""
+        if not self.data:
+            raise ValueError("Данные не загружены. Сначала вызовите extract().")
+
+        # Пример: удаление пустых контактов
+        self.data['contacts']['list'] = [
+            contact for contact in self.data.get('contacts', {}).get('list', []) 
+            if contact
+        ]
+        print("Данные очищены.")
+
+    def transform(self):
+        """Преобразует данные в Pandas DataFrame."""
+        if not self.data:
+            raise ValueError("Данные не загружены. Сначала вызовите extract().")
+
+        self.df = pd.DataFrame(self.data['contacts']['list'])
+        print("Данные преобразованы в DataFrame.")
+
+    def export(self, output_path):
+        """Экспортирует DataFrame в CSV-файл."""
+        if not hasattr(self, 'df'):
+            raise ValueError("Данные не преобразованы. Сначала вызовите transform().")
+
+        self.df.to_csv(output_path, index=False)
+        print(f"Данные экспортированы в {output_path}.")
+
+# Пример использования
+if __name__ == "__main__":
+    service = DataExportService("DataExport_2024-07-24/result.json")
+    service.extract()
+    service.clean()
+    service.transform()
+    service.export("output.csv")
